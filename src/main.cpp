@@ -22,10 +22,12 @@
 #define BRIGHTNESS_CHAR_UUID "a1069a62-66a2-404f-bc91-535cf0c148c3"
 #define THEME_CHAR_UUID "ae43f9b8-3731-40f6-b523-d6231f65a1a1"
 #define TIME_CHAR_UUID "a2be1fb5-3193-400f-9b0e-4e234487c2c7"
+#define POWER_CHAR_UUID "41eb8ece-85eb-4952-8b5d-4293aadc4993"
 
 BLECharacteristic *brightnessCharacteristics;
 BLECharacteristic *themeCharacteristics;
 BLECharacteristic *timeCharacteristics;
+BLECharacteristic *powerCharacteristics;
 
 uint8_t gCurrentPatternNumber = 0;
 uint8_t gHue = 0;
@@ -36,7 +38,7 @@ CRGB leds[LED_COUNT];
 CRGBPalette16 currentPalette;
 
 const bool dbg = false; // debug, true = enable serial input/output - set to false to save memory
-bool state = true;
+bool isOn = true;
 byte brightness = 100;                   // default brightness if none saved to eeprom yet / first run
 byte brightnessLevels[3]{100, 150, 230}; // 0 - 255, brightness Levels (min, med, max) - index (0-2) will get stored to eeprom
                                          // Note: With brightnessAuto = 1 this will be the maximum brightness setting used!
@@ -129,7 +131,6 @@ class ThemeSetCallback : public BLECharacteristicCallbacks
   void onWrite(BLECharacteristic *pCharacteristic)
   {
     std::string value = pCharacteristic->getValue();
-    Serial.println(value.c_str());
     if (strcmp(value.c_str(), "CYCLE") == 0)
     {
       cycleTheme();
@@ -166,10 +167,21 @@ class TimeSetCallback : public BLECharacteristicCallbacks
   }
 };
 
+class PowerSetCallback : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *characteristics) 
+  {
+    std::string value = characteristics->getValue();
+    if (strcmp(value.c_str(), "ON") == 0)  {
+      isOn = true;
+    } else {
+      isOn = false;
+    }
+  }
+};
+
 void setup()
 {
-  Serial.begin(9600);
-  Serial.println("Starting BLE Server");
   BLEDevice::init("LazyClock");
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(SERVICE_UUID);
@@ -183,6 +195,10 @@ void setup()
 
   timeCharacteristics = pService->createCharacteristic(TIME_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
   timeCharacteristics->setCallbacks(new TimeSetCallback());
+
+  powerCharacteristics = pService->createCharacteristic(POWER_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
+  powerCharacteristics->setCallbacks(new PowerSetCallback());
+
   pService->start();
 
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -192,12 +208,12 @@ void setup()
   pAdvertising->setMinPreferred(0x12);
 
   BLEDevice::startAdvertising();
-  Serial.println("Advertising BLE service!");
   if (brightnessAuto == 1)
     pinMode(pinLDR, OUTPUT);
 
   if (dbg)
   {
+    Serial.begin(9600);
     Serial.println();
     Serial.println(F("Lazy 7 / One starting up..."));
     Serial.print(F("Configured for: "));
@@ -260,12 +276,6 @@ void loop()
     cycleTheme();
   }
 
-  /*if ( ( hour() == 3 || hour() == 9 || hour() == 15 || hour() == 21 ) &&                    // if hour is 3, 9, 15 or 21 and...
-        ( minute() == 3 && second() == 0 ) ) {                                               // minute is 3 and second is 0....
-    if ( dbg ) Serial.print(F("Current time: ")); Serial.println(now());
-    //syncNTP();                                                                            // ...either sync using ntp or...
-    if ( dbg ) Serial.print(F("New time: ")); Serial.println(now());
-  }*/
   FastLED.show();
   lastLoop = millis(); // if dbg = true this will read serial input/keys
 }
@@ -317,7 +327,7 @@ void colorOverlay()
 void updateDisplay(byte color, byte colorSpacing)
 { // this is what redraws the "screen"
   FastLED.clear();
-  if (!state)
+  if (!isOn)
   {
     return;
   }                                        // clear whatever the leds might have assigned currently...
@@ -531,58 +541,9 @@ void setupClock()
     Serial.println(F("Setup done..."));
 }
 
-// stuff below will only be used when compiled for nodeMCU _AND_ using WiFi
-/*
-void syncNTP() {                                                                            // gets time from ntp and sets internal time accordingly, will return when no connection is established
-  if ( dbg ) Serial.println(F("Entering syncNTP()..."));
-  if ( WiFi.status() != WL_CONNECTED ) {
-    if ( dbg ) Serial.println(F("No active WiFi connection!"));
-    return;
-  }                                                                                         // Sometimes the connection doesn't work right away although status is WL_CONNECTED...
-  delay(1500);                                                                              // ...so we'll wait a moment before causing network traffic
-  timeClient.update();
-  setTime(timeClient.getEpochTime());
-  if ( dbg ) {
-    Serial.print(F("nodemcu time: ")); Serial.println(now());
-    Serial.print(F("ntp time    : ")); Serial.println(timeClient.getEpochTime());
-    Serial.println(F("syncNTP() done..."));
-  }
-}*/
-/*
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.println("Got message");
-  Serial.println(topic);
-
-  char message[length + 1];
-
-  sprintf(message, "%c", (char)payload[0]);
-  for (int i = 1; i < length; i++)
-  {
-    sprintf(message, "%s%c", message, (char)payload[i]);
-  }
-
-  Serial.println(message);
-
-  if (strcmp(topic, "lazy-clock/light/switch") == 0) {
-    if (strcmp(message, "ON") == 0) {
-      state = true;
-    } else {
-      state = false;
-    }
-    //mqttClient.publish("lazy-clock/light/state", state ? "ON" : "OFF", true);
-  }
-  if (strcmp(topic, "lazy-clock/palette/set") == 0) {
-    switchPalette(message);
-    //mqttClient.publish("lazy-clock/palette/state", message, true);
-  }
-  if (strcmp(topic, "lazy-clock/palette/effect") == 0) {
-    cycleTheme();
-  }
-}*/
-
 void cycleTheme()
 {
-  if (!state)
+  if (!isOn)
     return;
   for (int i = 0; i < 200; i++)
   {

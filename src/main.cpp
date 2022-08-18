@@ -24,9 +24,13 @@
 #define TIME_CHAR_UUID "a2be1fb5-3193-400f-9b0e-4e234487c2c7"
 #define POWER_CHAR_UUID "41eb8ece-85eb-4952-8b5d-4293aadc4993"
 
+BLEDescriptor brightnessDescriptor(BLEUUID((uint16_t)0x2901));
 BLECharacteristic *brightnessCharacteristics;
+BLEDescriptor themeDescriptor(BLEUUID((uint16_t)0x2901));
 BLECharacteristic *themeCharacteristics;
+BLEDescriptor timeDescriptor(BLEUUID((uint16_t)0x2901));
 BLECharacteristic *timeCharacteristics;
+BLEDescriptor powerDescriptor(BLEUUID((uint16_t)0x2901));
 BLECharacteristic *powerCharacteristics;
 
 uint8_t gCurrentPatternNumber = 0;
@@ -126,6 +130,7 @@ void showDots(byte dots, byte color);
 void readLDR();
 void displayTime(time_t t, byte color, byte colorSpacing);
 
+
 class ThemeSetCallback : public BLECharacteristicCallbacks
 {
   void onWrite(BLECharacteristic *pCharacteristic)
@@ -152,12 +157,12 @@ class TimeSetCallback : public BLECharacteristicCallbacks
     {
       std::string hourStr = value.substr(0, 2);
       std::string minuteStr = value.substr(2, 2);
-      tmElements_t setupTime; // Create a time element which will be used. Using the current time would
-      setupTime.Hour = atoi(hourStr.c_str());    // give some problems (like time still running while setting hours/minutes)
-      setupTime.Minute = atoi(minuteStr.c_str());   // Setup starts at 12 (12 pm)
-      setupTime.Second = 1;   // 1 because displayTime() will always display both dots at even seconds
-      setupTime.Day = 15;     // not really neccessary as day/month aren't used but who cares ^^
-      setupTime.Month = 5;    // see above
+      tmElements_t setupTime;                     // Create a time element which will be used. Using the current time would
+      setupTime.Hour = atoi(hourStr.c_str());     // give some problems (like time still running while setting hours/minutes)
+      setupTime.Minute = atoi(minuteStr.c_str()); // Setup starts at 12 (12 pm)
+      setupTime.Second = 1;                       // 1 because displayTime() will always display both dots at even seconds
+      setupTime.Day = 15;                         // not really neccessary as day/month aren't used but who cares ^^
+      setupTime.Month = 5;                        // see above
       setupTime.Year = 2020 - 1970;
 
       setTime(makeTime(setupTime));
@@ -169,13 +174,18 @@ class TimeSetCallback : public BLECharacteristicCallbacks
 
 class PowerSetCallback : public BLECharacteristicCallbacks
 {
-  void onWrite(BLECharacteristic *characteristics) 
+  void onWrite(BLECharacteristic *characteristics)
   {
     std::string value = characteristics->getValue();
-    if (strcmp(value.c_str(), "ON") == 0)  {
+    if (strcmp(value.c_str(), "ON") == 0)
+    {
       isOn = true;
-    } else {
+      powerCharacteristics->setValue("ON");
+    }
+    else
+    {
       isOn = false;
+      powerCharacteristics->setValue("OFF");
     }
   }
 };
@@ -185,19 +195,27 @@ void setup()
   BLEDevice::init("LazyClock");
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(SERVICE_UUID);
+
   brightnessCharacteristics = pService->createCharacteristic(BRIGHTNESS_CHAR_UUID,
-                                                             BLECharacteristic::PROPERTY_READ);
+                                                             BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ);
+  brightnessDescriptor.setValue("Brightness");
+  brightnessCharacteristics->addDescriptor(&brightnessDescriptor);
 
   themeCharacteristics = pService->createCharacteristic(THEME_CHAR_UUID,
-                                                        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
-
+                                                        BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_READ);
+  themeDescriptor.setValue("Color Theme");
+  themeCharacteristics->addDescriptor(&themeDescriptor);
   themeCharacteristics->setCallbacks(new ThemeSetCallback());
 
   timeCharacteristics = pService->createCharacteristic(TIME_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
   timeCharacteristics->setCallbacks(new TimeSetCallback());
+  timeDescriptor.setValue("Time");
+  timeCharacteristics->addDescriptor(&timeDescriptor);
 
-  powerCharacteristics = pService->createCharacteristic(POWER_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
+  powerCharacteristics = pService->createCharacteristic(POWER_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_READ);
   powerCharacteristics->setCallbacks(new PowerSetCallback());
+  powerDescriptor.setValue("Power On/Off");
+  powerCharacteristics->addDescriptor(&powerDescriptor);
 
   pService->start();
 
@@ -232,6 +250,7 @@ void setup()
   switchPalette(0);
 
   setupClock();
+  powerCharacteristics->setValue("ON");
 }
 
 void loop()
@@ -264,6 +283,7 @@ void loop()
 
       char message[16];
       itoa(rawLDR, message, 10);
+
       brightnessCharacteristics->setValue(message);
       // mqttClient.publish("lazy-clock/brightness/state", message);
     }
@@ -272,7 +292,9 @@ void loop()
 
   if (minute() % 10 == 0 && second() == 0)
   {
-    Serial.println("Time to cycle the theme");
+    if (dbg) {
+      Serial.println("Time to cycle the theme");
+    }
     cycleTheme();
   }
 
@@ -448,9 +470,12 @@ void showDots(byte dots, byte color)
 
 void switchPalette(int palette)
 {
-  Serial.print("Setting palette to ");
-  Serial.println(palette);
+  if (dbg) {
+    Serial.print("Setting palette to ");
+    Serial.println(palette);
+  }
   themeCharacteristics->setValue(palette);
+  
   if (palette == 0)
   {
     currentColorTheme = 0;
